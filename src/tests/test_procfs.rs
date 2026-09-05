@@ -42,8 +42,10 @@ use crate::{
 };
 use utils::ExpectedResult;
 
-use anyhow::Error;
-use rustix::mount::OpenTreeFlags;
+use std::os::unix::io::{AsFd, AsRawFd};
+
+use anyhow::{Context, Error};
+use rustix::{io as rustix_io, mount::OpenTreeFlags};
 
 macro_rules! procfs_tests {
     // Create the actual test functions.
@@ -346,6 +348,45 @@ procfs_tests! {
     proc_sym_opath_onofollow: open(self, "fd/1", O_PATH) => (error: Ok);
     proc_sym_odir_opath_onofollow: open(self, "fd/1", O_DIRECTORY|O_PATH) => (error: Err(ErrorKind::OsError(Some(libc::ENOTDIR))));
     proc_dir_odir_opath_onofollow: open(self, "fd", O_DIRECTORY|O_PATH) => (error: Ok);
+}
+
+// Regression test for <https://github.com/cyphar/libpathrs/issues/413> and
+// <https://github.com/opencontainers/runc/issues/5438>. Make sure that a broken
+// cached ProcfsHandle fd still does not cause a panic.
+#[test]
+#[cfg_attr(not(nextest), ignore)] // needs one-process-per-test scheme
+fn procfs_dead_cached_handle() -> Result<(), Error> {
+    // Construct a handle which will fill the cache.
+    let procfs = ProcfsHandleBuilder::new()
+        .build()
+        .context("get cached procfs handle")?;
+    let cached_fd = procfs.as_fd().as_raw_fd();
+    if procfs.into_owned_fd().is_some() {
+        // FIXME(libtest skip): use proper runtime skipping in the test.
+        eprintln!("procfs handle is not cached (missing privileges?)");
+        return Ok(());
+    }
+
+    // Emulate runc's "close fds before exec" behaviour.
+    // SAFETY: This *deliberately* violates I/O safety but is only done within
+    // nextest and thus no other tests will inherit this broken state.
+    unsafe { rustix_io::close(cached_fd) };
+
+    // TODO: Maybe we should dup2 over cached_fd?
+
+    for _ in 0..3 {
+        let procfs = ProcfsHandleBuilder::new()
+            .build()
+            .context("get procfs handle after cached fd was closed")?;
+        procfs
+            .open(ProcfsBase::ProcSelf, ".", OpenFlags::O_PATH)
+            .context("open /proc/self with replacement procfs handle")?;
+        assert!(
+            procfs.into_owned_fd().is_some(),
+            "handles created after the cache was invalidated should not be cached"
+        );
+    }
+    Ok(())
 }
 
 mod utils {

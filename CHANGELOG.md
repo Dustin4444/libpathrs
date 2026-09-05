@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   bindings have other issues with the new headers. See the discussion in
   mozilla/cbindgen#1156 for more details.
 
+### Changed ###
+- runc closes all open file descriptors before executing user code in order to
+  avoid some particularly hairy security bugs. Unfortunately, this also
+  invalidates the cached `ProcfsHandle` in libpathrs, which could cause runc to
+  later crash if a subsequent procfs operation was attempted (which happened in
+  the error path of runc). Most downstream users will never run into this
+  issue, but we now handle the problem a bit more gracefully -- if libpathrs
+  detects this problematic condition, the cached handle is locked out of use
+  and all `ProcfsHandleBuilder::build` invocations will produce a new handle.
+  (#413, opencontainers/runc#5438)
+
 ## [0.2.5] - 2026-06-17 ##
 
 > Or, to save on postage, I'll just poison him with this!
