@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased] ##
 
+## [0.2.6] - 2026-09-05 ##
+
+> "If only, if only," the woodpecker sighs,
+> "The bark on the tree was as soft as the skies."
+
 ### Fixed ###
 - The new `--{enable,disable}-*` arguments for `install.sh` to control shared
   library installation were incorrectly called `--disable-dynamic` rather than
@@ -804,7 +809,8 @@ Initial release.
   - C FFI.
   - Python bindings.
 
-[Unreleased]: https://github.com/cyphar/libpathrs/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/cyphar/libpathrs/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/cyphar/libpathrs/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/cyphar/libpathrs/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/cyphar/libpathrs/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/cyphar/libpathrs/compare/v0.2.2...v0.2.3
