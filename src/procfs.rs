@@ -332,26 +332,47 @@ impl ProcfsHandleBuilder {
     /// underlying file descriptor for a [`ProcfsHandle`] returned by this
     /// method.
     ///
-    /// # Panics
-    ///
-    /// If the cached [`ProcfsHandle`] has been invalidated, this method will
-    /// panic as this is not a state that should be possible to reach in regular
-    /// program execution.
+    /// To avoid negatively impacting downstream projects, as a final safety
+    /// mechanism if the cached [`ProcfsHandle`] does become invalidated,
+    /// [`build`][Self::build] will refuse to use it and will always create new
+    /// handles. Users are still strongly recommended to not fiddle with file
+    /// descriptors in that way (unless absolutely necessary).
     pub fn build(self) -> Result<ProcfsHandle, Error> {
         // MSRV(1.70): Use std::sync::OnceLock.
         static CACHED_PROCFS_HANDLE: OnceLock<OwnedFd> = OnceLock::new();
+        static CACHED_HANDLE_IS_BAD: OnceLock<()> = OnceLock::new();
+
+        // Helper to make the lower conditional a bit easier to read.
+        fn is_cached_handle_bad() -> bool {
+            CACHED_HANDLE_IS_BAD.get().is_some()
+        }
 
         // MSRV(1.85): Use let chain here (Rust 2024).
-        if self.is_cache_friendly() {
+        if self.is_cache_friendly() && !is_cached_handle_bad() {
             // If there is already a cached filesystem available, use that.
             if let Some(fd) = CACHED_PROCFS_HANDLE.get() {
-                let procfs = ProcfsHandle::try_from_borrowed_fd(fd.as_fd())
-                    .expect("cached procfs handle should be valid");
-                debug_assert!(
-                    procfs.is_subset && procfs.is_detached,
-                    "cached procfs handle should be subset=pid and detached"
-                );
-                return Ok(procfs);
+                if let Ok(procfs) = ProcfsHandle::try_from_borrowed_fd(fd.as_fd()) {
+                    debug_assert!(
+                        procfs.is_subset && procfs.is_detached,
+                        "cached procfs handle should be subset=pid and detached"
+                    );
+                    return Ok(procfs);
+                }
+                // If the cached procfs handle failed to validate the file
+                // descriptor must have been closed or dup2'd over. Crashing
+                // here would be the most correct approach, but runc
+                // intentionally closes all file descriptors and so we might
+                // crash runc unexpectedly (see opencontainers/runc#5438).
+                //
+                // So, if the handle is bad (for any reason) we fall back to the
+                // creation behaviour and lock out any future attempts to use
+                // the handle (if a program has gotten into this kind of state
+                // it's best to not try to touch bad fds).
+                //
+                // TODO: We should probably log the error here, but logging in
+                // libraries really sucks...
+                let _ = CACHED_HANDLE_IS_BAD.set(());
+                // fallthrough to creation path
             }
         }
 
@@ -370,7 +391,7 @@ impl ProcfsHandleBuilder {
                 is_subset: true, // must be subset=pid to cache (risk: dangerous files)
                 is_detached: true, // must be detached to cache (risk: escape to host)
                 ..
-            } => {
+            } if !is_cached_handle_bad() => {
                 // Try to cache our new handle -- if another thread beat us to
                 // it, just use the handle that they cached and drop the one we
                 // created.
